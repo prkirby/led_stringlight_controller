@@ -1,0 +1,6 @@
+{
+    "sketch": "led-arduino-controller.ino",
+    "configuration": "mode=on",
+    "board": "arduino:megaavr:nona4809",
+    "port": "/dev/tty.usbmodem14401"
+}
