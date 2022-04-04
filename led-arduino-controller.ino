@@ -4,38 +4,53 @@
 
 /**
  * Different modes available:
- *  1 - "steady"          {Contsant on}
- *  2 - "blink"           {Annoying blinking}
- *  3 - "full-fade"       {Fade both LED banks together in pulse}
- *  4 - "switching-fade"  {Fade each bank in and out}
+ *  1 - "Steady"                  {Contsant on}
+ *  2 - "Blink"                   {Annoying blinking}
+ *  3 - "Full Fade - Triangle"    {Fade both LED banks together in pulse - Triangle waveform}
+ *  4 - "Full Fade - Saw"         {Fade both LED banks together in pulse - Saw waveform}
+ *  5 - "Full Fade - Sine"        {Fade both LED banks together in pulse - Sine waveform}
+ *  6 - "Banked Fade - Triangle"  {Fade each LED Banks in and out in pulse - Triangle waveform} NOTE: Doesnt get close to minDIM for some reason
+ *  7 - "Banked Fade - Sine"      {Fade each LED Banks in and out in pulse - Sine waveform}
  */
-int mode = 3;
-int animationTime = 2000; // Milliseconds for a full "loop" of animation
-int minDim = 20;          // In 0-255 scale (PWM), IE 25% duty cycle is minimum
-
-#define LED_POS 10
-#define LED_NEG 9
-#define DIM_POT A0
+int mode = 7;
+int animationTime = 4000; // Milliseconds for a full "loop" of animation
+int minDim = 20;          // In 0-255 scale (PWM)
+/**
+ * DO NOT EDIT BELOW HERE
+ * - unless intentional of course....
+ */
+#define LED_POS 10 // Positive pin for LED control
+#define LED_NEG 9  // Negative pin for LED control
+#define DIM_POT A0 // Pin for dimming potentionmenter
 
 // 50 hz should be considered as minimum dimming.
 
 // Frequency of the LED lights is 150HZ between two polarities by default
 // Frequency of phase shift for each LED "Bank" (Lower freq makes things a bit tripper for steady modes)
-int halfPeriod = 500000 / 240; // (1000000us / 2 / frequency) (240hz seems to be sweet spot for low fades?)
+// IMPORTANT: frequency seems to be needed to be dialed on a string by string basis
+int halfPeriod = 500000 / 120; // (1000000us / 2 / frequency) (240hz seems to be sweet spot for low fades?)
 unsigned long curMicros = 0;
 unsigned long prevMicros = 0;
 unsigned long prevDimMicros = 0;
 unsigned long curMillis = 0;
 unsigned long prevMillis = 0;
 int curAnimTime = 0;
-bool phase = true;   // True Bank_A is active, False Bank_B is active
-int curMaxDim = 255; // Current maximum dim, set by potentiometer (in 0-255 PWM scale)
-int curDim = 255;    // Dim between 0 and 1.0, adjusted by animation functions (in 0-255 PWM scale)
-bool dir = true;     // true for up, false for down, used in wavetype animations
+bool phase = true;           // True Bank_A is active, False Bank_B is active
+int curMaxDim = 255;         // Current maximum dim, set by potentiometer (in 0-255 PWM scale)
+int curDim = 255;            // Dim between 0 and 255, adjusted by animation functions (in 0-255 PWM scale)
+int curDimB = 255;           // Same as above, but for use in 2 bank patterns only (symmetrical patterns)
+bool dir = true;             // true for up, false for down, used in wavetype animations
+bool twoBankPattern = false; // Whether or not this is a pattern that switches between each bank
+bool bankPhase = false;      // Phase boolean for if we have twoBankPatter (both banks running patterns in symmetry)
 
-// Animation function pointer
-void (*animationFunction)();
+void (*animationFunction)(); // Animation function pointer
 
+/**
+ * @brief Light up either of the two LED banks, based on current state variables such as phase, and dimness
+ *
+ * @param bankA Is bankA currently in animation cycle
+ * @param bankB Is bankB currently in animation cycle
+ */
 void light_banks(bool bankA, bool bankB)
 {
   if (phase && bankA) // If we are in phase A, write pulse width out to bankA
@@ -47,17 +62,21 @@ void light_banks(bool bankA, bool bankB)
   if (!phase && bankB) // And vise versa
   {
     digitalWrite(LED_POS, LOW);
-    analogWrite(LED_NEG, min(curDim, curMaxDim));
+    analogWrite(LED_NEG, min(twoBankPattern ? curDimB : curDim, curMaxDim));
   }
 }
 
-/* "Contstant" on, flipping at each phase interval  */
+/**
+ * @brief Contstant on, flipping at each phase interval
+ */
 void mode_steady()
 {
   light_banks(true, true);
 }
 
-/* Swap between each bank at half animation time interval */
+/**
+ * @brief Swap between each bank at half animation time interval
+ */
 void mode_blink()
 {
   if (curAnimTime < animationTime / 2)
@@ -70,13 +89,80 @@ void mode_blink()
   }
 }
 
-/* Fade both LED banks together in pulse, in triangle wave form */
-void mode_full_fade()
+/**
+ * @brief Map the diming based on animation time linrarly
+ * @return int
+ */
+int linearDimMap(bool dir = true)
+{
+  int from = dir ? minDim : curMaxDim;
+  int to = dir ? curMaxDim : minDim;
+
+  return map(curAnimTime, 0.0, animationTime, from, to);
+}
+
+double getCurRads()
+{
+  double animPercent = double(curAnimTime) / double(animationTime);
+  return animPercent * PI;
+}
+
+/**
+ * @brief Map the diming value based on a sin wav function
+ * @return int
+ */
+int sinDimMap(double rads)
+{
+  return map(long(255 * sin(rads)), 0.0, 255.0, minDim, curMaxDim);
+}
+
+/**
+ * @brief Fade both LED banks together in pulse, in triangle wave form
+ * @note There is a weird flash on the down edge of the cycle
+ */
+void mode_full_triangle_fade()
 {
   // Scale between minDim and max dim
-  curDim = map(curAnimTime, 0, animationTime, minDim, curMaxDim);
-  if (!dir)
-    curDim = curMaxDim - curDim; // Take inverse if we are going "down" or in reverse
+  curDim = linearDimMap(dir);
+  light_banks(true, true);
+}
+
+/**
+ * @brief Fade both LED Banks together in ramp pulse
+ */
+void mode_full_saw_fade()
+{
+  // Scale between minDim and max dim
+  curDim = linearDimMap(dir);
+  light_banks(true, true);
+}
+
+/**
+ * @brief Fade both LED banks in sin wave
+ */
+void mode_full_sin_fade()
+{
+  curDim = sinDimMap(getCurRads());
+  light_banks(true, true);
+}
+
+/**
+ * @brief Fade each bank separately in sin wave
+ */
+void mode_banked_tri_fade()
+{
+  curDim = linearDimMap(dir);
+  curDimB = linearDimMap(!dir);
+  light_banks(true, true);
+}
+
+/**
+ * @brief Fade each bank separately in sin wave
+ */
+void mode_banked_sin_fade()
+{
+  curDim = sinDimMap(getCurRads());
+  curDimB = 255 - sinDimMap(getCurRads());
   light_banks(true, true);
 }
 
@@ -97,9 +183,24 @@ void setup()
     animationFunction = mode_blink;
     break;
   case 3:
-    animationFunction = mode_full_fade;
+    animationFunction = mode_full_triangle_fade;
+    break;
+  case 4:
+    animationFunction = mode_full_saw_fade;
+    break;
+  case 5:
+    animationFunction = mode_full_sin_fade;
+    break;
+  case 6:
+    twoBankPattern = true;
+    animationFunction = mode_banked_tri_fade;
+    break;
+  case 7:
+    twoBankPattern = true;
+    animationFunction = mode_banked_sin_fade;
     break;
   default:
+    animationFunction = mode_steady;
     break;
   }
 }
@@ -111,6 +212,8 @@ void loop()
   // Check for new dimming value
   curMicros = micros();
   curMillis = millis();
+
+  // Switch "phase" at appropriate halfPeriod Intervals
   if (curMicros - prevMicros >= halfPeriod)
   {
     phase = !phase;
@@ -128,4 +231,5 @@ void loop()
   curAnimTime = curMillis - prevMillis;
 
   animationFunction();
+  // delay(500);
 }
