@@ -4,23 +4,24 @@
 
 /**
  * Different modes available:
- *  1 - "Steady"                  {Contsant on}
+ *  1 - "Steady"                  {Constant on}
  *  2 - "Blink"                   {Annoying blinking}
  *  3 - "Full Fade - Triangle"    {Fade both LED banks together in pulse - Triangle waveform}
  *  4 - "Full Fade - Saw"         {Fade both LED banks together in pulse - Saw waveform}
  *  5 - "Full Fade - Sine"        {Fade both LED banks together in pulse - Sine waveform}
  *  6 - "Banked Fade - Triangle"  {Fade each LED Banks in and out in pulse - Triangle waveform} NOTE: Doesnt get close to minDIM for some reason
- *  7 - "Banked Fade - Sine"      {Fade each LED Banks in and out in pulse - Sine waveform}
+ *  7 - "Banked Fade - Saw"       {Fade each LED Banks in and out in pulse - Saw waveform}
+ *  8 - "Banked Fade - Sine"      {Fade each LED Banks in and out in pulse - Sine waveform}
  */
-int mode = 7;
-int animationTime = 4000; // Milliseconds for a full "loop" of animation
-int minDim = 20;          // In 0-255 scale (PWM)
+int mode = 8;
+int animationTime = 10000; // Milliseconds for a full "loop" of animation
+int minDim = 0;            // In 0-255 scale (PWM)
 /**
  * DO NOT EDIT BELOW HERE
  * - unless intentional of course....
  */
-#define LED_POS 10 // Positive pin for LED control
-#define LED_NEG 9  // Negative pin for LED control
+#define LED_POS D1 // Positive pin for LED control
+#define LED_NEG D2 // Negative pin for LED control
 #define DIM_POT A0 // Pin for dimming potentionmenter
 
 // 50 hz should be considered as minimum dimming.
@@ -101,6 +102,11 @@ int linearDimMap(bool dir = true)
   return map(curAnimTime, 0.0, animationTime, from, to);
 }
 
+/**
+ * @brief Get the Cur Rads based on animation percent
+ *
+ * @return double
+ */
 double getCurRads()
 {
   double animPercent = double(curAnimTime) / double(animationTime);
@@ -113,7 +119,25 @@ double getCurRads()
  */
 int sinDimMap(double rads)
 {
-  return map(long(255 * sin(rads)), 0.0, 255.0, minDim, curMaxDim);
+  double sinVal = sin(rads);
+  if (sinVal < 0)
+    sinVal *= -1;
+  return map(double(255.0 * sinVal), 0.0, 255.0, minDim, curMaxDim);
+}
+
+/**
+ * @brief Phase shift the provided dimming 180deg out of phase
+ *
+ * @param dim Dim level you want to phase shift
+ * @return int
+ */
+int phasedDim(int dim)
+{
+  // Offset the dim by half the current available scale
+  int phasedDim = dim + ((curMaxDim - minDim) / 2);
+  if (phasedDim > curMaxDim)
+    phasedDim = minDim + (phasedDim - curMaxDim);
+  return phasedDim;
 }
 
 /**
@@ -133,7 +157,7 @@ void mode_full_triangle_fade()
 void mode_full_saw_fade()
 {
   // Scale between minDim and max dim
-  curDim = linearDimMap(dir);
+  curDim = linearDimMap();
   light_banks(true, true);
 }
 
@@ -147,7 +171,7 @@ void mode_full_sin_fade()
 }
 
 /**
- * @brief Fade each bank separately in sin wave
+ * @brief Fade each bank separately in triangle wave
  */
 void mode_banked_tri_fade()
 {
@@ -157,17 +181,31 @@ void mode_banked_tri_fade()
 }
 
 /**
- * @brief Fade each bank separately in sin wave
+ * @brief Fade each bank separately in saw wave
+ */
+void mode_banked_saw_fade()
+{
+  int linearDim = linearDimMap();
+  curDim = linearDim;
+  curDimB = phasedDim(linearDim);
+  light_banks(true, true);
+}
+
+/**
+ * @brief Fade each bank separately in sin wave, phase shifted
  */
 void mode_banked_sin_fade()
 {
-  curDim = sinDimMap(getCurRads());
-  curDimB = 255 - sinDimMap(getCurRads());
+  double curRads = getCurRads();
+  curDim = sinDimMap(curRads);
+  curDimB = sinDimMap(curRads + (PI / 2));
   light_banks(true, true);
 }
 
 void setup()
 {
+  // analogWriteRange(255); // Match range of arduino uno
+  // analogWriteFreq(420);  // Match freq of arduino uno
   pinMode(LED_POS, OUTPUT);
   pinMode(LED_NEG, OUTPUT);
   Serial.begin(115200);
@@ -197,6 +235,10 @@ void setup()
     break;
   case 7:
     twoBankPattern = true;
+    animationFunction = mode_banked_saw_fade;
+    break;
+  case 8:
+    twoBankPattern = true;
     animationFunction = mode_banked_sin_fade;
     break;
   default:
@@ -207,7 +249,6 @@ void setup()
 
 void loop()
 {
-
   // Sample time, and set phase for which LED Bank we are currently interested in
   // Check for new dimming value
   curMicros = micros();
@@ -218,7 +259,8 @@ void loop()
   {
     phase = !phase;
     prevMicros = curMicros;
-    curMaxDim = map(analogRead(DIM_POT), 0, 1023, minDim, 255);
+    // Ignore analog ready for now (esp8266 use 0.0 -> 1v analog pin read, which I don't have set up)
+    // curMaxDim = map(analogRead(DIM_POT), 0, 1023, minDim, 255);
   }
 
   // Set current anim time based millis
