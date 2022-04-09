@@ -1,6 +1,13 @@
 /*
  LED Controller using L298N Motor Driver for 2-phase led string lights
 */
+#include "config.h"
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+#include <ArduinoOTA.h>
+#define LED_POS D1 // Positive pin for LED control
+#define LED_NEG D2 // Negative pin for LED control
+#define DIM_POT A0 // Pin for dimming potentionmenter
 
 /**
  * Different modes available:
@@ -14,15 +21,9 @@
  *  8 - "Banked Fade - Sine"      {Fade each LED Banks in and out in pulse - Sine waveform}
  */
 int mode = 8;
-int animationTime = 10000; // Milliseconds for a full "loop" of animation
-int minDim = 0;            // In 0-255 scale (PWM)
-/**
- * DO NOT EDIT BELOW HERE
- * - unless intentional of course....
- */
-#define LED_POS D1 // Positive pin for LED control
-#define LED_NEG D2 // Negative pin for LED control
-#define DIM_POT A0 // Pin for dimming potentionmenter
+int animationTime = 8000; // Milliseconds for a full "loop" of animation
+int minDim = 20;          // In 0-255 scale (PWM)
+int curMaxDim = 255;      // Current maximum dim, set by potentiometer (in 0-255 PWM scale)
 
 // 50 hz should be considered as minimum dimming.
 
@@ -37,7 +38,6 @@ unsigned long curMillis = 0;
 unsigned long prevMillis = 0;
 int curAnimTime = 0;
 bool phase = true;           // True Bank_A is active, False Bank_B is active
-int curMaxDim = 255;         // Current maximum dim, set by potentiometer (in 0-255 PWM scale)
 int curDim = 255;            // Dim between 0 and 255, adjusted by animation functions (in 0-255 PWM scale)
 int curDimB = 255;           // Same as above, but for use in 2 bank patterns only (symmetrical patterns)
 bool dir = true;             // true for up, false for down, used in wavetype animations
@@ -45,6 +45,130 @@ bool twoBankPattern = false; // Whether or not this is a pattern that switches b
 bool bankPhase = false;      // Phase boolean for if we have twoBankPatter (both banks running patterns in symmetry)
 
 void (*animationFunction)(); // Animation function pointer
+
+// Wifi passwords
+const char *wifiName = WIFI_NAME;
+const char *wifiPass = WIFI_PASS;
+const char *otaName = OTA_NAME;
+const char *otaPass = OTA_PASS;
+
+void setup()
+{
+  Serial.begin(115200); // Start the Serial communication to send messages to the computer
+  delay(10);
+  Serial.println('\n');
+
+  // Setup WIFI and OTA
+  wifiSetup();
+
+  // analogWriteRange(255); // Match range of arduino uno
+  // analogWriteFreq(420);  // Match freq of arduino uno
+  pinMode(LED_POS, OUTPUT);
+  pinMode(LED_NEG, OUTPUT);
+  digitalWrite(LED_POS, LOW);
+  digitalWrite(LED_NEG, LOW);
+
+  setupAnimations();
+}
+
+void loop()
+{
+  // Handle WiFi chores
+  MDNS.update();
+  ArduinoOTA.handle();
+
+  // Sample time, and set phase for which LED Bank we are currently interested in
+  // Check for new dimming value
+  curMicros = micros();
+  curMillis = millis();
+
+  // Switch "phase" at appropriate halfPeriod Intervals
+  if (curMicros - prevMicros >= halfPeriod)
+  {
+    phase = !phase;
+    prevMicros = curMicros;
+    // Ignore analog ready for now (esp8266 use 0.0 -> 1v analog pin read, which I don't have set up)
+    // curMaxDim = map(analogRead(DIM_POT), 0, 1023, minDim, 255);
+  }
+
+  // Set current anim time based millis
+  if (curMillis - prevMillis >= animationTime)
+  {
+    prevMillis = curMillis;
+    dir = !dir;
+  }
+
+  curAnimTime = curMillis - prevMillis;
+
+  animationFunction();
+  // delay(500);
+}
+
+/**
+ * @brief Set up WIFI and OTA data transfer
+ * SSIDs and passwords are setup in config.h
+ *
+ */
+void wifiSetup()
+{
+  WiFi.begin(wifiName, wifiPass);
+  Serial.print("Connecting to ");
+  Serial.print(wifiName);
+  Serial.println("...");
+
+  int i = 1;
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print(i);
+    Serial.print(" ");
+    i++;
+    delay(1000);
+  }
+
+  Serial.println('\n');
+  Serial.println("Connection established!");
+  Serial.print("IP address:\t");
+  Serial.println(WiFi.localIP());
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+
+  ArduinoOTA.setHostname(otaName);
+  ArduinoOTA.setPassword(otaPass);
+
+  ArduinoOTA.onStart([]()
+                     { Serial.println("Start"); });
+  ArduinoOTA.onEnd([]()
+                   { Serial.println("\nEnd"); });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+                        { Serial.printf("Progress: %u%%\r", (progress / (total / 100))); });
+
+  ArduinoOTA.onError([](ota_error_t error)
+                     {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed"); });
+
+  ArduinoOTA.begin();
+  Serial.println("OTA ready");
+
+  // this NEEDS to be at the end of the setup for some reason, after OTA setup.
+  if (!MDNS.begin("esp8266"))
+  { // Start the mDNS responder for esp8266.local
+    Serial.println("Error setting up MDNS responder!");
+  }
+  Serial.println("mDNS responder started");
+}
+
+/**
+ * =============================
+ * Animation functions / helpers
+ * =============================
+ */
 
 /**
  * @brief Light up either of the two LED banks, based on current state variables such as phase, and dimness
@@ -202,16 +326,12 @@ void mode_banked_sin_fade()
   light_banks(true, true);
 }
 
-void setup()
+/**
+ * @brief Switch the animation function based on provided mode
+ *
+ */
+void setupAnimations()
 {
-  // analogWriteRange(255); // Match range of arduino uno
-  // analogWriteFreq(420);  // Match freq of arduino uno
-  pinMode(LED_POS, OUTPUT);
-  pinMode(LED_NEG, OUTPUT);
-  Serial.begin(115200);
-  digitalWrite(LED_POS, LOW);
-  digitalWrite(LED_NEG, LOW);
-
   switch (mode)
   {
   case 1:
@@ -245,33 +365,4 @@ void setup()
     animationFunction = mode_steady;
     break;
   }
-}
-
-void loop()
-{
-  // Sample time, and set phase for which LED Bank we are currently interested in
-  // Check for new dimming value
-  curMicros = micros();
-  curMillis = millis();
-
-  // Switch "phase" at appropriate halfPeriod Intervals
-  if (curMicros - prevMicros >= halfPeriod)
-  {
-    phase = !phase;
-    prevMicros = curMicros;
-    // Ignore analog ready for now (esp8266 use 0.0 -> 1v analog pin read, which I don't have set up)
-    // curMaxDim = map(analogRead(DIM_POT), 0, 1023, minDim, 255);
-  }
-
-  // Set current anim time based millis
-  if (curMillis - prevMillis >= animationTime)
-  {
-    prevMillis = curMillis;
-    dir = !dir;
-  }
-
-  curAnimTime = curMillis - prevMillis;
-
-  animationFunction();
-  // delay(500);
 }

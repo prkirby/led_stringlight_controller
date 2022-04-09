@@ -1,0 +1,6 @@
+- Looks like the motor-driver doesn't want / need the 3.3v from the ESP8266 but rather the 5V in from the step down
+- Pulling from the 3.3v cause curren increase
+- Not pulling from the buck converter 5v side causes current spike
+- Seems happiest when gettin the same as Vin in the ESP. 
+  - I assume this is only because it wants to run at 5v logic instead of 3.3v
+  - I haven't noticed any LSP298 logic hiccups from over-voltage for upperend YET
