@@ -21,8 +21,8 @@
  *  7 - "Banked Fade - Saw"       {Fade each LED Banks in and out in pulse - Saw waveform}
  *  8 - "Banked Fade - Sine"      {Fade each LED Banks in and out in pulse - Sine waveform}
  */
-int mode = 8;
-int animationTime = 8000; // Milliseconds for a full "loop" of animation
+int mode = 1;
+int animationTime = 3000; // Milliseconds for a full "loop" of animation
 int minDim = 20;          // In 0-255 scale (PWM)
 int curMaxDim = 255;      // Current maximum dim, set by potentiometer (in 0-255 PWM scale)
 
@@ -265,6 +265,12 @@ void light_banks(bool bankA, bool bankB)
     digitalWrite(LED_POS, LOW);
     analogWrite(LED_NEG, min(twoBankPattern ? curDimB : curDim, curMaxDim));
   }
+
+  /*If both banks are off, turn off lights */
+  if (!bankA && !bankB) {
+    digitalWrite(LED_POS, LOW);
+    digitalWrite(LED_NEG, LOW);
+  }
 }
 
 /**
@@ -341,6 +347,14 @@ int phasedDim(int dim)
 }
 
 /**
+ * @brief Turn off
+ */
+void mode_off()
+{
+  light_banks(false, false);
+}
+
+/**
  * @brief Fade both LED banks together in pulse, in triangle wave form
  * @note There is a weird flash on the down edge of the cycle
  */
@@ -410,6 +424,10 @@ void animationFunction()
 {
   switch (mode)
   {
+  case 0:
+    twoBankPattern = false;
+    mode_off();
+    break;
   case 1:
     twoBankPattern = false;
     mode_steady();
