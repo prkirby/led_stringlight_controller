@@ -5,6 +5,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
+#include <ArduinoMqttClient.h>
 #define LED_POS D1 // Positive pin for LED control
 #define LED_NEG D2 // Negative pin for LED control
 #define DIM_POT A0 // Pin for dimming potentionmenter
@@ -44,13 +45,19 @@ bool dir = true;             // true for up, false for down, used in wavetype an
 bool twoBankPattern = false; // Whether or not this is a pattern that switches between each bank
 bool bankPhase = false;      // Phase boolean for if we have twoBankPatter (both banks running patterns in symmetry)
 
-void (*animationFunction)(); // Animation function pointer
-
 // Wifi passwords
 const char *wifiName = WIFI_NAME;
 const char *wifiPass = WIFI_PASS;
 const char *otaName = OTA_NAME;
 const char *otaPass = OTA_PASS;
+const char *mqttBroker = MQTT_BROKER;
+const int mqttPort = MQTT_PORT;
+
+// MQTT stuff
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
+const int CMDS_LENGTH = 4;
+String cmds[4] = {"mode", "minDim", "maxDim", "animTime"}; // "mode", "minDim", "maxDim", "animTime"
 
 void setup()
 {
@@ -67,13 +74,12 @@ void setup()
   pinMode(LED_NEG, OUTPUT);
   digitalWrite(LED_POS, LOW);
   digitalWrite(LED_NEG, LOW);
-
-  setupAnimations();
 }
 
 void loop()
 {
   // Handle WiFi chores
+  mqttClient.poll();
   MDNS.update();
   ArduinoOTA.handle();
 
@@ -133,6 +139,34 @@ void wifiSetup()
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
+  // MQTT Server
+  Serial.print("Attempting to connect to the MQTT broker: ");
+  Serial.println(mqttBroker);
+
+  if (!mqttClient.connect(mqttBroker, mqttPort))
+  {
+    Serial.print("MQTT connection failed! Error code = ");
+    Serial.println(mqttClient.connectError());
+
+    while (1)
+      ;
+  }
+
+  Serial.println("Connected to the MQTT broker!");
+  Serial.println();
+
+  // set the message receive callback
+  mqttClient.onMessage(onMqttMessage);
+
+  for (int i = 0; i < CMDS_LENGTH; i++)
+  {
+    String name = otaName;
+    String topic = "lights/" + name + "/" + cmds[i];
+
+    Serial.println(topic);
+    mqttClient.subscribe(topic);
+  }
+
   ArduinoOTA.setHostname(otaName);
   ArduinoOTA.setPassword(otaPass);
 
@@ -157,11 +191,53 @@ void wifiSetup()
   Serial.println("OTA ready");
 
   // this NEEDS to be at the end of the setup for some reason, after OTA setup.
-  if (!MDNS.begin("esp8266"))
-  { // Start the mDNS responder for esp8266.local
+  if (!MDNS.begin(otaName))
+  { // Start the mDNS responder for {otaName}.local
     Serial.println("Error setting up MDNS responder!");
   }
   Serial.println("mDNS responder started");
+}
+
+/**
+ * @brief Handle MQTT Messages
+ *
+ * @param messageSize
+ */
+void onMqttMessage(int messageSize)
+{
+  // we received a message, print out the topic and contents
+  // Serial.println("Received a message with topic '");
+  String topic = mqttClient.messageTopic();
+  // Serial.println(topic);
+  int message = mqttClient.readString().toInt();
+  // Serial.println(message);
+
+  if (topic.endsWith(cmds[0]))
+  {
+    // Serial.println("fired " + cmds[0]);
+    mode = message;
+  }
+  else if (topic.endsWith(cmds[1]))
+  {
+    // Serial.println("fired " + cmds[1]);
+    minDim = message;
+  }
+  else if (topic.endsWith(cmds[2]))
+  {
+    // Serial.println("fired " + cmds[2]);
+    curMaxDim = message;
+    curDim = message;
+    curDimB = message;
+  }
+  else if (topic.endsWith(cmds[3]))
+  {
+    // Serial.println("fired " + cmds[3]);
+    animationTime = message;
+  }
+
+  // use the Stream interface to print the contents
+
+  // Serial.println();
 }
 
 /**
@@ -330,39 +406,45 @@ void mode_banked_sin_fade()
  * @brief Switch the animation function based on provided mode
  *
  */
-void setupAnimations()
+void animationFunction()
 {
   switch (mode)
   {
   case 1:
-    animationFunction = mode_steady;
+    twoBankPattern = false;
+    mode_steady();
     break;
   case 2:
-    animationFunction = mode_blink;
+    twoBankPattern = false;
+    mode_blink();
     break;
   case 3:
-    animationFunction = mode_full_triangle_fade;
+    twoBankPattern = false;
+    mode_full_triangle_fade();
     break;
   case 4:
-    animationFunction = mode_full_saw_fade;
+    twoBankPattern = false;
+    mode_full_saw_fade();
     break;
   case 5:
-    animationFunction = mode_full_sin_fade;
+    twoBankPattern = false;
+    mode_full_sin_fade();
     break;
   case 6:
     twoBankPattern = true;
-    animationFunction = mode_banked_tri_fade;
+    mode_banked_tri_fade();
     break;
   case 7:
     twoBankPattern = true;
-    animationFunction = mode_banked_saw_fade;
+    mode_banked_saw_fade();
     break;
   case 8:
     twoBankPattern = true;
-    animationFunction = mode_banked_sin_fade;
+    mode_banked_sin_fade();
     break;
   default:
-    animationFunction = mode_steady;
+    twoBankPattern = false;
+    mode_steady();
     break;
   }
 }

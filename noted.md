@@ -4,3 +4,5 @@
 - Seems happiest when gettin the same as Vin in the ESP. 
   - I assume this is only because it wants to run at 5v logic instead of 3.3v
   - I haven't noticed any LSP298 logic hiccups from over-voltage for upperend YET
+- Turns out L298n can run at 3.3v logic no problem
+- Pulling 5v enable pin and feeding from buck converter is good call
