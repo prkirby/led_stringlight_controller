@@ -138,6 +138,8 @@ void wifiSetup()
   Serial.println(WiFi.localIP());
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP, 0);
+  WiFi.mode(WIFI_STA);
 
   // MQTT Server
   Serial.print("Attempting to connect to the MQTT broker: ");
@@ -267,7 +269,8 @@ void light_banks(bool bankA, bool bankB)
   }
 
   /*If both banks are off, turn off lights */
-  if (!bankA && !bankB) {
+  if (!bankA && !bankB)
+  {
     digitalWrite(LED_POS, LOW);
     digitalWrite(LED_NEG, LOW);
   }
