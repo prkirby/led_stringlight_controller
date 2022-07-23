@@ -6,6 +6,7 @@
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
 #include <ArduinoMqttClient.h>
+#include <ArduinoJson.h>
 #define LED_POS D1 // Positive pin for LED control
 #define LED_NEG D2 // Negative pin for LED control
 #define DIM_POT A0 // Pin for dimming potentionmenter
@@ -21,7 +22,8 @@
  *  7 - "Banked Fade - Saw"       {Fade each LED Banks in and out in pulse - Saw waveform}
  *  8 - "Banked Fade - Sine"      {Fade each LED Banks in and out in pulse - Sine waveform}
  */
-int mode = 1;
+bool status = true;       // on = true | off = false
+int mode = 1;             // the current animation mode
 int animationTime = 3000; // Milliseconds for a full "loop" of animation
 int minDim = 20;          // In 0-255 scale (PWM)
 int curMaxDim = 255;      // Current maximum dim, set by potentiometer (in 0-255 PWM scale)
@@ -56,8 +58,14 @@ const int mqttPort = MQTT_PORT;
 // MQTT stuff
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
-const int CMDS_LENGTH = 4;
-String cmds[4] = {"mode", "minDim", "maxDim", "animTime"}; // "mode", "minDim", "maxDim", "animTime"
+const int CMDS_LENGTH = 6;
+String cmds[6] = {"status", "mode", "minDim", "maxDim", "animTime", "getState"}; // "mode", "minDim", "maxDim", "animTime"
+
+// JSON Stuff for sending state
+const size_t CAPACITY = JSON_OBJECT_SIZE(5);
+StaticJsonDocument<CAPACITY> doc;
+
+JsonObject state = doc.to<JsonObject>();
 
 void setup()
 {
@@ -107,6 +115,8 @@ void loop()
   curAnimTime = curMillis - prevMillis;
 
   animationFunction();
+
+  // NOTE: should make this 'sleep mode' if status is off
   // delay(500);
 }
 
@@ -117,6 +127,8 @@ void loop()
  */
 void wifiSetup()
 {
+  wifiClient.setNoDelay(true);
+
   WiFi.begin(wifiName, wifiPass);
   Serial.print("Connecting to ");
   Serial.print(wifiName);
@@ -214,32 +226,63 @@ void onMqttMessage(int messageSize)
   int message = mqttClient.readString().toInt();
   // Serial.println(message);
 
+  // Set status if status message
   if (topic.endsWith(cmds[0]))
+  {
+    status = message;
+  }
+
+  // Otherwise set mode
+  if (topic.endsWith(cmds[1]))
   {
     // Serial.println("fired " + cmds[0]);
     mode = message;
   }
-  else if (topic.endsWith(cmds[1]))
+  else if (topic.endsWith(cmds[2]))
   {
     // Serial.println("fired " + cmds[1]);
     minDim = message;
   }
-  else if (topic.endsWith(cmds[2]))
+  else if (topic.endsWith(cmds[3]))
   {
     // Serial.println("fired " + cmds[2]);
     curMaxDim = message;
     curDim = message;
     curDimB = message;
   }
-  else if (topic.endsWith(cmds[3]))
+  else if (topic.endsWith(cmds[4]))
   {
     // Serial.println("fired " + cmds[3]);
     animationTime = message;
+  }
+  else if (topic.endsWith(cmds[5]))
+  {
+    mqttStateUpdate();
   }
 
   // use the Stream interface to print the contents
 
   // Serial.println();
+}
+
+/**
+ * @brief Send update on current pertinent variables
+ */
+void mqttStateUpdate()
+{
+  String name = otaName;
+  String topic = "lights/" + name + "/state";
+  state["status"] = status;
+  state["mode"] = mode;
+  state["minDim"] = minDim;
+  state["maxDim"] = curMaxDim;
+  state["animTime"] = animationTime;
+
+  mqttClient.beginMessage(topic);
+  String serializedState;
+  serializeJson(state, serializedState);
+  mqttClient.print(serializedState);
+  mqttClient.endMessage();
 }
 
 /**
@@ -425,47 +468,50 @@ void mode_banked_sin_fade()
  */
 void animationFunction()
 {
-  switch (mode)
+  if (!status)
   {
-  case 0:
-    twoBankPattern = false;
     mode_off();
-    break;
-  case 1:
-    twoBankPattern = false;
-    mode_steady();
-    break;
-  case 2:
-    twoBankPattern = false;
-    mode_blink();
-    break;
-  case 3:
-    twoBankPattern = false;
-    mode_full_triangle_fade();
-    break;
-  case 4:
-    twoBankPattern = false;
-    mode_full_saw_fade();
-    break;
-  case 5:
-    twoBankPattern = false;
-    mode_full_sin_fade();
-    break;
-  case 6:
-    twoBankPattern = true;
-    mode_banked_tri_fade();
-    break;
-  case 7:
-    twoBankPattern = true;
-    mode_banked_saw_fade();
-    break;
-  case 8:
-    twoBankPattern = true;
-    mode_banked_sin_fade();
-    break;
-  default:
-    twoBankPattern = false;
-    mode_steady();
-    break;
+  }
+  else
+  {
+    switch (mode)
+    {
+    case 1:
+      twoBankPattern = false;
+      mode_steady();
+      break;
+    case 2:
+      twoBankPattern = false;
+      mode_blink();
+      break;
+    case 3:
+      twoBankPattern = false;
+      mode_full_triangle_fade();
+      break;
+    case 4:
+      twoBankPattern = false;
+      mode_full_saw_fade();
+      break;
+    case 5:
+      twoBankPattern = false;
+      mode_full_sin_fade();
+      break;
+    case 6:
+      twoBankPattern = true;
+      mode_banked_tri_fade();
+      break;
+    case 7:
+      twoBankPattern = true;
+      mode_banked_saw_fade();
+      break;
+    case 8:
+      twoBankPattern = true;
+      mode_banked_sin_fade();
+      break;
+    default:
+      twoBankPattern = false;
+      mode_steady();
+      break;
+    }
   }
 }
